@@ -7,6 +7,8 @@
 
 #include "stm32l4xx.h"
 
+#include "rfm95w.h"
+
 // Pre-defined memory locations for program initialization.
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
 
@@ -17,7 +19,7 @@ volatile uint32_t systick;
 // Define whether the 'receive' or 'transmit' half of the program.
 #define RX_MODE ( 0 )
 #define TX_MODE ( 1 )
-#define MODE ( RX_MODE )
-//#define MODE ( TX_MODE )
+//#define MODE ( RX_MODE )
+#define MODE ( TX_MODE )
 
 #endif

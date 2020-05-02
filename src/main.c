@@ -164,65 +164,72 @@ int main(void) {
 
   uint8_t reg;
   printf( "Configure RFM95W for LoRa communication...\r\n" );
-  // Set 'RegOpMode' to sleep mode / high-frequency.
-  write_rf_reg( 0x01, 0x00 );
-  // Verify the new 'RegOpMode'.
-  reg = read_rf_reg( 0x01 );
-  printf( "RegOpMode: 0x%02X\r\n", reg );
-  // Set 'RegOpMode' to LoRa communication while in sleep mode.
-  write_rf_reg( 0x01, 0x80 );
-  // Verify the new 'RegOpMode'.
-  reg = read_rf_reg( 0x01 );
+  // Set 'RegOpMode' to sleep mode, and clear all other flags.
+  write_rf_reg( RF_OPMODE, RF_OP_MD_SLEEP );
+  // Wait for the module to go to sleep.
+  reg = read_rf_reg( RF_OPMODE );
+  while ( ( reg & RF_OP_MD ) != RF_OP_MD_SLEEP ) {
+    reg = read_rf_reg( RF_OPMODE );
+  }
+  // Set 'RegOpMode' to HF LoRa communication while in sleep mode.
+  reg &= ~( RF_OP_FREQ | RF_OP_MOD );
+  reg |=  ( RF_OP_FREQ_HF | RF_OP_MOD_LORA );
+  write_rf_reg( RF_OPMODE, reg );
+  // Print the new 'RegOpMode'.
+  reg = read_rf_reg( RF_OPMODE );
   printf( "RegOpMode: 0x%02X\r\n", reg );
   // Put the module back into 'standby' mode.
-  write_rf_reg( 0x01, reg | 0x01 );
+  reg &= ~( RF_OP_MD );
+  reg |=  ( RF_OP_MD_STDBY );
+  write_rf_reg( RF_OPMODE, reg );
   // Wait for the module to finish exiting 'sleep' mode.
-  while ( reg != 0x81 ) {
+  reg = read_rf_reg( RF_OPMODE );
+  while ( ( reg & RF_OP_MD ) != RF_OP_MD_STDBY ) {
     reg = read_rf_reg( 0x01 );
     printf( "RegOpMode: 0x%02X\r\n", reg );
   }
 
   // Set carrier frequency. With the default 32MHz crystal, each bit
   // is worth 61.035Hz. North 'muricans should use 0xE4C026 (~915MHz)
-  write_rf_reg( 0x06, 0xE4 );
-  write_rf_reg( 0x07, 0xC0 );
-  write_rf_reg( 0x08, 0x26 );
+  write_rf_reg( RF_FREQ_MSB, 0xE4 );
+  write_rf_reg( RF_FREQ_MID, 0xC0 );
+  write_rf_reg( RF_FREQ_LSB, 0x26 );
 
   // Clear all interrupt request flags.
-  write_rf_reg( 0x12, 0xFF );
+  write_rf_reg( RF_IRQ_FLAGS, 0xFF );
 
   // 'Receiver' half of the test program.
   #if ( MODE == RX_MODE )
     // Set the base FIFO address to 0.
-    write_rf_reg( 0x0F, 0x00 );
+    write_rf_reg( RF_FIFO_RXBASE, 0x00 );
     // Enter 'continuous receive' mode.
-    reg = read_rf_reg( 0x01 );
-    reg &= 0xF8;
-    reg |= 0x05;
-    write_rf_reg( 0x01, reg );
+    reg = read_rf_reg( RF_OPMODE );
+    reg &= ~( RF_OP_MD );
+    reg |=  ( RF_OP_MD_RXC );
+    write_rf_reg( RF_OPMODE, reg );
     // Receive data loop.
     while( 1 ) {
       // Wait for a 'receive done' or 'CRC error' interrupt request.
       // (There is no 'receive timeout' in continuous mode)
-      reg = read_rf_reg( 0x12 );
-      while( ( reg & 0x60 ) == 0 ) {
-        reg = read_rf_reg( 0x12 );
+      reg = read_rf_reg( RF_IRQ_FLAGS );
+      while( ( reg & ( RF_IRQ_RX_DONE | RF_IRQ_CRC_ERROR ) ) == 0 ) {
+        reg = read_rf_reg( RF_IRQ_FLAGS );
         printf( "ReqIrqFlag: 0x%02X\r\n", reg );
-        // Check receive status every half-second.
+        // Check receive status every half-second or so.
         delay_ms( 500 );
       }
       // Clear all interrupt request flags.
-      write_rf_reg( 0x12, 0xFF );
+      write_rf_reg( RF_IRQ_FLAGS, 0xFF );
       // Set FIFO address to the start of received data.
-      reg = read_rf_reg( 0x10 );
+      reg = read_rf_reg( RF_FIFO_RXADDR );
       printf( "RX@: 0x%02X\r\n", reg );
-      write_rf_reg( 0x0D, reg );
+      write_rf_reg( RF_FIFO_ADDR, reg );
       // Check how many bytes of data were received.
-      uint8_t rx_len = read_rf_reg( 0x13 );
+      uint8_t rx_len = read_rf_reg( RF_RX_LEN );
       printf( "RXL: 0x%02X\r\n", rx_len );
       // Read data out of the FIFO and print it.
       for ( uint8_t i = 0; i < rx_len; ++i ) {
-        reg = read_rf_reg( 0x00 );
+        reg = read_rf_reg( RF_FIFO );
         printf( "R%d: 0x%02X\r\n", i, reg );
       }
     }
@@ -230,34 +237,34 @@ int main(void) {
   // 'Transmitter' half of the test program.
   #elif ( MODE == TX_MODE )
     // Set the base FIFO address to 0.
-    write_rf_reg( 0x0E, 0x00 );
+    write_rf_reg( RF_FIFO_TXBASE, 0x00 );
     // Set payload length to 4 bytes.
-    write_rf_reg( 0x22, 0x04 );
+    write_rf_reg( RF_TX_LEN, 0x04 );
     // Transmit loop: send '0x01234567' forever. Hey, it's about as
     // useful a message as anything I ever say...
     while( 1 ) {
       // Reset FIFO address pointer.
-      write_rf_reg( 0x0D, 0x00 );
+      write_rf_reg( RF_FIFO_ADDR, 0x00 );
       // Set data in the FIFO.
-      write_rf_reg( 0x00, 0x01 );
-      write_rf_reg( 0x00, 0x23 );
-      write_rf_reg( 0x00, 0x45 );
-      write_rf_reg( 0x00, 0x67 );
+      write_rf_reg( RF_FIFO, 0x01 );
+      write_rf_reg( RF_FIFO, 0x23 );
+      write_rf_reg( RF_FIFO, 0x45 );
+      write_rf_reg( RF_FIFO, 0x67 );
       // Enter 'transmit' mode.
-      reg = read_rf_reg( 0x01 );
-      reg &= 0xF8;
-      reg |= 0x03;
-      write_rf_reg( 0x01, reg );
+      reg = read_rf_reg( RF_OPMODE );
+      reg &= ~( RF_OP_MD );
+      reg |=  ( RF_OP_MD_TX );
+      write_rf_reg( RF_OPMODE, reg );
       // Wait for the device to finish and enter 'standby' mode.
-      reg = read_rf_reg( 0x01 );
-      while( ( reg & 0x07 ) != 0x01 ) {
-        reg = read_rf_reg( 0x01 );
+      reg = read_rf_reg( RF_OPMODE );
+      while( ( reg & RF_OP_MD ) != RF_OP_MD_STDBY ) {
+        reg = read_rf_reg( RF_OPMODE );
         delay_ms( 100 );
       }
       // Read the interrupt status, then clear the 'TX done' bit.
-      reg = read_rf_reg( 0x12 );
+      reg = read_rf_reg( RF_IRQ_FLAGS );
       printf( "ReqIrqFlag: 0x%02X\r\n", reg );
-      write_rf_reg( 0x12, 0x08 );
+      write_rf_reg( RF_IRQ_FLAGS, RF_IRQ_TX_DONE );
       // Sleep for 10 seconds before transmitting again.
       printf( "TX done.\r\n" );
       delay_ms( 10000 );
